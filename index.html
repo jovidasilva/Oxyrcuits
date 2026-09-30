@@ -1,0 +1,139 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <title>Oxyrcuits</title>
+  <meta name="description" content="Monte e simule circuitos em placa perfurada, veroboard e protoboard, com Arduino e ESP32.">
+  <meta name="theme-color" content="#a8621f" media="(prefers-color-scheme: light)">
+  <meta name="theme-color" content="#141816" media="(prefers-color-scheme: dark)">
+  <link rel="icon" href="/favicon.svg" type="image/svg+xml">
+  <link rel="apple-touch-icon" href="/apple-touch-icon.png">
+</head>
+<body>
+<div class="app">
+  <header class="bar">
+    <div class="brand">
+      <h1>Oxy<b>r</b>cuits</h1>
+      <input class="projname" id="projName" aria-label="Nome do projeto" value="Circuito sem nome">
+      <span class="savestate" id="saveState">não salvo</span>
+    </div>
+    <div class="group">
+      <button class="btn" id="bProjects">Projetos</button>
+      <button class="btn" id="bCode" title="Código do Arduino">{ } Código</button>
+      <button class="btn" id="bHelp" title="Atalhos e ajuda (?)">?</button>
+      <select class="btn" id="exSel" aria-label="Abrir exemplo"><option value="">Exemplos…</option></select>
+    </div>
+    <div class="group">
+      <button class="btn" id="bUndo" title="Desfazer (Ctrl+Z)">↶</button>
+      <button class="btn" id="bRedo" title="Refazer (Ctrl+Y)">↷</button>
+    </div>
+    <div class="seg" role="group" aria-label="Lado da placa">
+      <button class="btn on" id="vTop" title="Lado dos componentes">Superior</button>
+      <button class="btn" id="vBot" title="Lado da solda, espelhado como se você virasse a placa">Inferior</button>
+    </div>
+    <div class="group">
+      <button class="btn on" id="bXray" title="Mostrar as trilhas de baixo por transparência">Raio‑X</button>
+      <button class="btn on" id="bTags" title="Etiquetas das trilhas (T1, T2…)">Etiquetas</button>
+      <button class="btn" id="bSolderAll" title="Soldar todos os pinos que ainda estão sem solda">Soldar pinos</button>
+      <button class="btn" id="bNetCol" title="Pintar cada rede de uma cor">Cores por rede</button>
+      <button class="btn" id="zOut" title="Diminuir zoom (−)">−</button>
+      <span class="mono small" id="zVal">100%</span>
+      <button class="btn" id="zIn" title="Aumentar zoom (+)">+</button>
+      <button class="btn" id="zFit" title="Enquadrar tudo (F)">Enquadrar</button>
+    </div>
+  </header>
+
+  <main class="work">
+    <nav class="left" aria-label="Ferramentas e peças">
+      <div class="tools" id="tools"></div>
+      <div class="lib">
+        <input id="libSearch" type="search" placeholder="Buscar peça (ex.: mosfet, 10k, relé)" aria-label="Buscar peça">
+        <div class="chips" id="libChips" role="group" aria-label="Filtrar peças"></div>
+        <div class="libscroll" id="lib"></div>
+      </div>
+    </nav>
+    <div class="center">
+    <section class="stage" id="stage">
+      <div class="viewtag" id="viewtag">vista superior</div>
+      <div class="stage-inner"><svg id="board" xmlns="http://www.w3.org/2000/svg"></svg></div>
+    </section>
+    <section class="dock" id="dock" hidden aria-label="Código do microcontrolador">
+      <div class="dockbar">
+        <b>Código</b>
+        <select class="btn sm" id="codeMcu" aria-label="Microcontrolador"></select>
+        <button class="btn sm" id="cCheck" title="Verificar sem rodar">✓ Verificar</button>
+        <button class="btn sm primary" id="cRun" title="Rodar (Ctrl+Enter)">▶ Rodar</button>
+        <button class="btn sm" id="cPause">⏸ Pausar</button>
+        <button class="btn sm" id="cStop">■ Parar</button>
+        <select class="btn sm" id="cSpeed" aria-label="Velocidade"><option value="0.25">0,25×</option><option value="1" selected>1×</option><option value="4">4×</option><option value="20">20×</option></select>
+        <span class="pill mute" id="codeState">parado</span>
+        <span class="mono small muted" id="codeTime"></span>
+        <span style="flex:1"></span>
+        <select class="btn sm" id="cTpl" aria-label="Modelos de código"></select>
+        <button class="btn sm" id="dockClose" aria-label="Fechar painel de código">✕</button>
+      </div>
+      <div class="dockbody">
+        <div class="editor"><div class="gutter" id="gutter" aria-hidden="true"></div><textarea id="codeArea" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="Código"></textarea></div>
+        <div class="dockside">
+          <div class="dockpane"><div class="panehead">Problemas <span id="codeSum"></span></div><ul class="issues" id="codeDiags"></ul></div>
+          <div class="dockpane serial"><div class="panehead">Monitor serial <button class="btn sm" id="serialClear" style="margin-left:auto">Limpar</button></div><pre id="serialOut"></pre>
+            <form id="serialForm" class="serialform"><input id="serialIn" type="text" placeholder="Enviar para o Arduino…" aria-label="Enviar pelo Serial"><label class="small"><input type="checkbox" id="serialNl" checked> ↵</label><button class="btn sm" type="submit">Enviar</button></form></div>
+        </div>
+      </div>
+    </section>
+    </div>
+    <aside class="side">
+      <div class="card" id="inspector"></div>
+      <div class="card">
+        <div class="tabs" id="tabs" role="tablist"></div>
+        <div id="tabBody"></div>
+      </div>
+    </aside>
+  </main>
+
+  <footer class="status" id="status"></footer>
+</div>
+
+<div class="modal" id="helpModal" hidden>
+  <div class="card">
+    <h2>Atalhos e ajuda <button class="btn sm" id="helpClose" style="margin-left:auto">Fechar</button></h2>
+    <div class="helpgrid">
+      <div><div class="sectlabel" style="margin-top:0">Vista</div><dl>
+        <dt>Botão do meio + arrastar</dt><dd>Mover a vista</dd><dt>Espaço + arrastar</dt><dd>Mover a vista</dd><dt>Roda do mouse</dt><dd>Zoom no cursor</dd><dt>Shift + roda</dt><dd>Rolar para os lados</dd><dt>F · Ctrl+0</dt><dd>Enquadrar tudo</dd><dt>+ / −</dt><dd>Zoom</dd><dt>B</dt><dd>Virar a placa (lado da solda)</dd></dl></div>
+      <div><div class="sectlabel" style="margin-top:0">Seleção</div><dl>
+        <dt>Clique</dt><dd>Selecionar</dd><dt>Arrastar no vazio</dt><dd>Caixa de seleção</dd><dt>Shift + clique</dt><dd>Somar ou tirar da seleção</dd><dt>Ctrl+A</dt><dd>Selecionar tudo</dd><dt>Setas · Shift+setas</dt><dd>Mover 1 ou 5 furos</dd><dt>Botão direito</dt><dd>Menu de ações</dd><dt>Del</dt><dd>Excluir</dd></dl></div>
+      <div><div class="sectlabel" style="margin-top:0">Edição</div><dl>
+        <dt>Ctrl+C · Ctrl+X · Ctrl+V</dt><dd>Copiar, recortar, colar</dd><dt>Ctrl+D</dt><dd>Duplicar</dd><dt>Ctrl+Z · Ctrl+Y</dt><dd>Desfazer, refazer</dd><dt>R</dt><dd>Girar peça</dd><dt>Ctrl+S</dt><dd>Salvar agora</dd><dt>Esc</dt><dd>Cancelar / voltar a Selecionar</dd></dl></div>
+      <div><div class="sectlabel" style="margin-top:0">Ferramentas</div><dl>
+        <dt>V</dt><dd>Selecionar</dd><dt>T</dt><dd>Trilha de solda</dd><dt>J</dt><dd>Fio</dd><dt>S</dt><dd>Solda</dd><dt>X</dt><dd>Cortar trilha (veroboard)</dd><dt>L</dt><dd>Ligação de esquema</dd><dt>E</dt><dd>Apagar</dd><dt>1–5</dt><dd>R 330Ω, R 1kΩ, 2N2222, borne, LED</dd></dl></div>
+    </div>
+    <div class="sectlabel">Bancada</div>
+    <p class="note">Placas, protoboards e Arduinos ficam na bancada como objetos: adicione pela biblioteca (Placas e controladores) ou pelo botão direito no vazio, arraste pela borda para mover e remova pelo botão direito ou Del. Fios (J) ligam placas diferentes e os pinos do Arduino.</p>
+    <div class="sectlabel">Código</div>
+    <p class="note">Abra "{ } Código", escreva o sketch e clique em Rodar (Ctrl+Enter). O programa lê e escreve nos pinos do circuito simulado; clique e segure num botão da placa para apertá-lo. Ctrl+Enter roda; a lista de Problemas mostra erros de sintaxe, tipos, estouro de int, pinos inválidos e ligações que não batem com o circuito.</p>
+  </div>
+</div>
+<div class="modal" id="projModal" hidden>
+  <div class="card">
+    <h2>Projetos <small id="storeMode"></small></h2>
+    <div class="newrow">
+      <button class="btn primary" id="pNew">Novo projeto</button>
+      <select class="btn" id="pNewBoard" aria-label="Placa do novo projeto"></select>
+      <label class="btn">Importar .json<input type="file" id="pImport" accept=".json,application/json" hidden></label>
+      <span style="flex:1"></span>
+      <button class="btn" id="pClose">Fechar</button>
+    </div>
+    <div class="plist" id="plist"></div>
+    <details class="help">
+      <summary>Exportar como texto</summary>
+      <p class="note">Se o download não estiver disponível, copie este JSON para guardar o projeto atual. Para abrir, cole um JSON e clique em "Abrir texto colado".</p>
+      <textarea id="jsonBox" spellcheck="false" aria-label="JSON do projeto"></textarea>
+      <div class="row-actions"><button class="btn" id="mCopy">Copiar</button><button class="btn" id="mLoad">Abrir texto colado</button></div>
+    </details>
+    <div class="small" id="pMsg"></div>
+  </div>
+</div>
+<script type="module" src="/src/main.ts"></script>
+</body>
+</html>
