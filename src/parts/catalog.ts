@@ -66,6 +66,7 @@ export const LIB = [
     ['hdr','Barra de pinos','header',{ n:4, female:false }],
     ['btn','Botão','btn',{ pressed:false, color:'preto' }],
     ['sw','Chave SPDT','sw',{ pos:0 }],
+    ['mic','Microfone MAX4466','mic',{ sinal:'mix', nivel:60 }],
   ]],
   ['Cargas', [
     ['relay','Relé 5 V','relay',{}],
@@ -456,6 +457,39 @@ function registerParts() {
     read:(c,r) => `${r.i > 0.01 ? '<span class="tag sat">apitando</span>' : '<span class="tag cut">mudo</span>'}<br>${fmtU(r.v,'V')} · ${fmtU(r.i,'A')}`,
     checks:(c,r,add) => { if (r.v < -0.5) add('info', `${c.p.name} está com a polaridade invertida e não apita.`); if (r.v > 7) add('warn', `${c.p.name}: buzzer de 5 V recebendo ${fmtU(r.v,'V')}.`); },
     bom:() => 'Buzzer ativo 5 V 12 mm', fields:() => [],
+  };
+  // Módulo MAX4466: a saída fica em VCC/2 (repouso) e o som oscila em volta disso.
+  // O DC é resolvido pelo MNA; o sinal de áudio entra no analogRead (code/arduino.ts) via CT.mic.ac.
+  const SONS = { mix:'Música (grave + médio + agudo)', grave:'Tom grave 100 Hz', medio:'Tom médio 700 Hz', agudo:'Tom agudo 3 kHz', silencio:'Silêncio' };
+  CT.mic = {
+    prefix:'MK', label:() => 'Microfone MAX4466', step:'big',
+    pins:() => [[0,0],[1,0],[2,0]], names:() => ['OUT','GND','VCC'], box:() => [-0.6,2.6,-3.6,0.45],
+    draw:(c,o) => {
+      let s = `<polygon points="${boxPoly(c, -0.6, 2.6, -3.6, 0.45)}" fill="#5b2a86" stroke="#2c1045" stroke-width="1.3"/>`;
+      s += `<polygon points="${circPoly(c, 1, -2.2, 1.05)}" fill="#1b1b1d" stroke="#9aa0a6" stroke-width="1.2"/>`;
+      s += circ(vp(c,1,-2.2), P*0.5, '#2e2f33');
+      for (let i = 0; i < 3; i++) s += circ(vp(c,i,0), P*0.2, 'url(#gSolder)');
+      if (!o.thumb) { ['OUT','GND','VCC'].forEach((n,i) => { s += txt(vp(c,i,-0.65), n, 6.5, '#efe3ff'); }); s += txt(vp(c,1,-0.95 - 0.3), 'MAX4466', 6, '#d9c6f2'); }
+      return s;
+    },
+    tagAt:() => [1,-4.0], tag:c => c.p.name,
+    sim:(c,N) => [{ t:'R', a:N[2], b:N[0], r:2000, tag:'a' }, { t:'R', a:N[0], b:N[1], r:2000, tag:'b' }, { t:'R', a:N[2], b:N[1], r:20000, tag:'q' }],
+    result:(c,E) => { const g = E.V(c,1); return { vs:E.V(c,2) - g, vout:E.V(c,0) - g, i:Math.abs(E.el('a').i) + Math.abs(E.el('q').i) }; },
+    // Sinal de teste em volts em torno do repouso; t em µs (relógio virtual do Arduino).
+    ac:(c,t) => {
+      const A = (c.p.nivel / 100) * 2, s = t / 1e6, w = f => Math.sin(2 * Math.PI * f * s), env = (f, ph) => 0.5 + 0.5 * Math.sin(2 * Math.PI * f * s + ph);
+      switch (c.p.sinal) {
+        case 'grave': return A * w(100);
+        case 'medio': return A * w(700);
+        case 'agudo': return A * w(3000);
+        case 'mix': return A / 2 * (w(100) * env(0.7, 0) + w(700) * env(1.1, 2) + w(3000) * env(1.7, 4));
+      }
+      return 0;
+    },
+    read:(c,r) => r.vs < 2.4 ? '<span class="tag cut">sem alimentação</span><br>ligue VCC (2,4–5,5 V) e GND' : `<span class="tag sat">captando</span> ${SONS[c.p.sinal] || ''}<br>VCC ${fmtU(r.vs,'V')} · OUT em repouso ${fmtU(r.vout,'V')} ± ${fmtU(c.p.sinal === 'silencio' ? 0 : c.p.nivel / 100 * 2,'V')}`,
+    checks:(c,r,add) => { if (r.vs > 5.5) add('err', `${c.p.name}: o MAX4466 aguenta no máximo 5,5 V e está recebendo ${fmtU(r.vs,'V')}.`); else if (r.vs < -0.3) add('err', `${c.p.name} está com VCC e GND invertidos.`); else if (r.vs > 0.3 && r.vs < 2.4) add('warn', `${c.p.name}: ${fmtU(r.vs,'V')} é pouco; o MAX4466 precisa de pelo menos 2,4 V.`); },
+    bom:() => 'Módulo microfone eletreto com MAX4466 (ganho ajustável 25–125×)',
+    fields:() => [['sinal','Som de teste','sel',Object.entries(SONS)],['nivel','Volume (amplitude na saída)','range',{min:0,max:100,step:1,fmt:v=>`${v}% (±${(v/50).toFixed(1)} V)`}]],
   };
   for (const [, items] of LIB) for (const it of items) LIBMAP[it[0]] = it;
 }

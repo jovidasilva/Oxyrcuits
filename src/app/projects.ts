@@ -254,6 +254,144 @@ void loop() {
     b.wire({ mcu: 'D9' }, { pin: [H1, 0] }, 'amarelo', 'PWM'); b.wire({ mcu: 'GND' }, { pin: [H1, 1] }, 'preto', 'GND');
     b.label(18, 10, '12V'); b.label(13, 5, 'GND'); b.label(9, 22, 'DRENO');
     void J1; return s; } },
+  audio: { name: 'Exemplo: analisador de áudio em 3 faixas (MAX4466 + Uno)', code: `// Analisador de áudio em 3 faixas: Arduino Uno + microfone MAX4466
+// A0  <- OUT do microfone (repouso em 2,5 V, o som oscila em volta)
+// D9  -> LED vermelho (graves, abaixo de 200 Hz)
+// D10 -> LED verde    (médios, 200 Hz a 2 kHz)
+// D11 -> LED azul     (agudos, acima de 2 kHz)
+// Lê um bloco de amostras, separa as faixas com filtros IIR Butterworth de
+// 2ª ordem (biquads) e acende cada LED conforme a energia (RMS) da sua faixa.
+// No simulador, escolha o som de teste no inspetor do microfone (MK1).
+
+const int MIC = A0;
+const int LED_GRAVE = 9;
+const int LED_MEDIO = 10;
+const int LED_AGUDO = 11;
+
+const int N = 64;                 // amostras por bloco
+const float CORTE_GRAVE = 200.0;  // Hz
+const float CORTE_AGUDO = 2000.0; // Hz
+const float GANHO = 2.5;          // sensibilidade dos LEDs (ajuste na montagem real)
+const float SUAVE = 0.5;          // 0 = resposta instantânea, perto de 1 = LEDs mais lentos
+
+int amostras[N];
+float fs = 8000.0;                // taxa de amostragem, medida no setup()
+
+// Filtros: 0 = passa-baixa 200 Hz, 1 = passa-alta 200 Hz,
+//          2 = passa-baixa 2 kHz,  3 = passa-alta 2 kHz
+float b0[4], b1[4], b2[4], a1[4], a2[4], z1[4], z2[4];
+float nivel[3];
+
+// Coeficientes do biquad (Audio EQ Cookbook, Q = 0,7071 = Butterworth)
+void projeta(int k, float fc, int passaAlta) {
+  float w = 2.0 * PI * fc / fs;
+  float c = cos(w);
+  float alfa = sin(w) / (2.0 * 0.7071);
+  float a0 = 1.0 + alfa;
+  if (passaAlta) {
+    b0[k] = (1.0 + c) / 2.0 / a0;
+    b1[k] = -(1.0 + c) / a0;
+  } else {
+    b0[k] = (1.0 - c) / 2.0 / a0;
+    b1[k] = (1.0 - c) / a0;
+  }
+  b2[k] = b0[k];
+  a1[k] = -2.0 * c / a0;
+  a2[k] = (1.0 - alfa) / a0;
+  z1[k] = 0.0;
+  z2[k] = 0.0;
+}
+
+// y[n] = b0 x[n] + b1 x[n-1] + b2 x[n-2] - a1 y[n-1] - a2 y[n-2]  (forma direta II transposta)
+float filtra(int k, float x) {
+  float y = b0[k] * x + z1[k];
+  z1[k] = b1[k] * x - a1[k] * y + z2[k];
+  z2[k] = b2[k] * x - a2[k] * y;
+  return y;
+}
+
+void lerBloco() {
+  for (int i = 0; i < N; i++) {
+    amostras[i] = analogRead(MIC);
+  }
+}
+
+int brilho(float rms) {
+  return (int)constrain(rms * 255.0 * GANHO, 0, 255);
+}
+
+void setup() {
+  pinMode(LED_GRAVE, OUTPUT);
+  pinMode(LED_MEDIO, OUTPUT);
+  pinMode(LED_AGUDO, OUTPUT);
+  Serial.begin(115200);
+
+  unsigned long t0 = micros();
+  lerBloco();
+  fs = N * 1000000.0 / (micros() - t0);
+
+  projeta(0, CORTE_GRAVE, 0);
+  projeta(1, CORTE_GRAVE, 1);
+  projeta(2, CORTE_AGUDO, 0);
+  projeta(3, CORTE_AGUDO, 1);
+  Serial.print("Taxa de amostragem: ");
+  Serial.print(fs, 0);
+  Serial.println(" Hz");
+}
+
+void loop() {
+  lerBloco();
+
+  long soma = 0;
+  for (int i = 0; i < N; i++) soma += amostras[i];
+  float media = soma * 1.0 / N;   // nível DC do microfone (VCC/2), removido antes de filtrar
+
+  float eg = 0.0, em = 0.0, ea = 0.0;
+  for (int i = 0; i < N; i++) {
+    float x = (amostras[i] - media) / 512.0;   // -1 a 1
+    float g = filtra(0, x);                    // graves
+    float m = filtra(2, filtra(1, x));         // médios (passa-faixa)
+    float a = filtra(3, x);                    // agudos
+    eg += g * g;
+    em += m * m;
+    ea += a * a;
+  }
+  nivel[0] = SUAVE * nivel[0] + (1.0 - SUAVE) * sqrt(eg / N);
+  nivel[1] = SUAVE * nivel[1] + (1.0 - SUAVE) * sqrt(em / N);
+  nivel[2] = SUAVE * nivel[2] + (1.0 - SUAVE) * sqrt(ea / N);
+
+  analogWrite(LED_GRAVE, brilho(nivel[0]));
+  analogWrite(LED_MEDIO, brilho(nivel[1]));
+  analogWrite(LED_AGUDO, brilho(nivel[2]));
+
+  // Formato do Serial Plotter da IDE do Arduino
+  Serial.print("Graves:");
+  Serial.print(brilho(nivel[0]));
+  Serial.print(" Medios:");
+  Serial.print(brilho(nivel[1]));
+  Serial.print(" Agudos:");
+  Serial.println(brilho(nivel[2]));
+}
+`, build() {
+    const bd = boardDefault(); bd.kind = 'bread'; bd.size = 830;
+    const b = exBuilder(bd); const s = b.s;
+    s.mcu = { type: 'uno', name: 'Arduino Uno', pins: { A0: { mode: 'analog', level: 0, duty: 0 }, D9: { mode: 'out', level: 0, duty: 0 }, D10: { mode: 'out', level: 0, duty: 0 }, D11: { mode: 'out', level: 0, duty: 0 } } };
+    b.wire({ mcu: '5V' }, { h: [2, 0] }, 'vermelho', '5V'); b.wire({ mcu: 'GND' }, { h: [2, 1] }, 'preto', 'GND');
+    // microfone: OUT/GND/VCC nas colunas 8/9/10, com 100 nF entre VCC e GND
+    b.add('mic', 8, 3, 0, { name: 'MK1', sinal: 'mix', nivel: 60, desc: 'Microfone com amplificador' });
+    b.add('capc', 10, 6, 2, { name: 'C1', model: '100n', span: 1, desc: 'Desacoplamento do MAX4466' });
+    b.wire({ h: [9, 4] }, { h: [9, 1] }, 'preto', 'GND'); b.wire({ h: [10, 4] }, { h: [10, 0] }, 'vermelho', '5V');
+    b.wire({ mcu: 'A0' }, { h: [8, 5] }, 'amarelo', 'ÁUDIO');
+    // três canais: pino PWM → 330 Ω → LED → GND
+    [[9, 20, 'red', 'Graves'], [10, 30, 'green', 'Médios'], [11, 40, 'blue', 'Agudos']].forEach(([pin, x, color, faixa], i) => {
+      b.wire({ mcu: 'D' + pin }, { h: [x, 6] }, ['laranja', 'verde', 'azul'][i], 'D' + pin);
+      b.add('res', x, 4, 0, { name: 'R' + (i + 1), val: 330, span: 3, watt: 0.25, desc: 'LED ' + faixa.toLowerCase() });
+      b.add('led', x + 3, 7, 0, { name: 'D' + (i + 1), color, size: 5, desc: faixa });
+      b.wire({ h: [x + 4, 3] }, { h: [x + 4, 1] }, 'preto');
+      b.label(x + 1, 6, faixa.toUpperCase());
+    });
+    b.label(8, 7, 'MIC');
+    return s; } },
   psu: { name: 'Exemplo: fonte 5 V com 7805 (veroboard)', build() {
     const bd = boardDefault(); bd.kind = 'strip'; bd.size = '5x7'; bd.cols = 18; bd.rows = 24; bd.sides = 1;
     const b = exBuilder(bd);

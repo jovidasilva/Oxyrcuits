@@ -3,6 +3,7 @@ import { app } from '../state';
 import { $, clamp, esc } from '../core/base';
 import { MCU, analyze, mcuById, mcuCaps, mk, mkSplit } from '../core/analysis';
 import { simulate } from '../sim/solver';
+import { CT } from '../parts/catalog';
 import { renderItems, renderOverlay } from '../ui/render';
 import { changed, renderStatus, renderTabs, say } from '../ui/panels';
 import { pressBtn } from '../ui/interaction';
@@ -665,7 +666,10 @@ export class Interp {
     const key = mk(this.mo.id, pid), r = app.SIM.ok ? app.SIM.mcu.get(key) : null;
     if (!r) return null;
     if (r.floating) { this.warn(line, `${pid} está flutuando (sem pull-up e sem ligação definida): a leitura é aleatória. Use INPUT_PULLUP ou um resistor.`); return Math.random() < 0.5 ? 0 : MCU[this.type].vcc; }
-    return r.v;
+    let v = r.v;
+    // shortcut: o som do microfone só chega a pinos ligados direto no OUT (sem capacitor/filtro no caminho); mudar se o simulador ganhar análise transitória.
+    for (const c of app.S.comps) if (c.type === 'mic' && app.AN.pinNode.get(c.id)[0] === app.AN.mcuNode.get(key)) { const m = app.SIM.comp.get(c.id); if (m && m.vs > 2.4) v = clamp(v + CT.mic.ac(c, RT.vt), 0, m.vs); }
+    return v;
   }
   callSync(e, env, args) {
     const m = MCU[this.type];
@@ -692,7 +696,8 @@ export class Interp {
       case 'pinMode': { const pid = this.pinOf(args[0], e.line), md = args[1]; this.cfg(pid).set = true; this.setPin(pid, md === 1 ? { mode: 'out', level: this.cfg(pid).written, duty: 0 } : md === 2 ? { mode: 'pullup', level: 0, duty: 0 } : { mode: 'in', level: 0, duty: 0 }); return 0; }
       case 'digitalWrite': { const pid = this.pinOf(args[0], e.line), c = this.cfg(pid), lv = args[1] ? 1 : 0; c.written = lv; if (c.mode === 'out' || c.mode === 'pwm') this.setPin(pid, { mode: 'out', level: lv, duty: 0 }); else { if (lv) this.warn(e.line, `digitalWrite(HIGH) em ${pid} sem pinMode OUTPUT liga só o pull-up interno (~35 kΩ).`); this.setPin(pid, { mode: lv ? 'pullup' : 'in', level: 0 }); } return 0; }
       case 'digitalRead': { const pid = this.pinOf(args[0], e.line), c = this.cfg(pid); if (c.mode === 'out') return c.level; if (c.mode === 'pwm') return c.duty > 50 ? 1 : 0; const v = this.readV(pid, e.line); if (v == null) { this.warn(e.line, `${pid} não está ligado a nada: a leitura fica flutuando.`); return Math.random() < 0.5 ? 1 : 0; } if (v > 0.6 * m.vcc) return 1; if (v < 0.3 * m.vcc) return 0; this.warn(e.line, `${pid} está com ${v.toFixed(2)} V, entre LOW e HIGH: leitura instável.`); return v > m.vcc / 2 ? 1 : 0; }
-      case 'analogRead': { const pid = this.pinOf(args[0], e.line); if (!mcuCaps(m, m.pin[pid]).analog) this.err(e.line, `${pid} não tem entrada analógica.`); const c = this.cfg(pid); if (c.mode !== 'in' && c.mode !== 'analog' && c.mode !== 'pullup') this.warn(e.line, `analogRead em ${pid}, que está como saída.`); if (c.mode === 'in') this.setPin(pid, { mode: 'analog' }); const v = this.readV(pid, e.line); if (v == null) { this.warn(e.line, `${pid} não está ligado a nada: a leitura analógica flutua.`); return Math.floor(Math.random() * m.adc); } return Math.round(clamp(v / m.vcc, 0, 1) * m.adc); }
+      case 'analogRead': { const pid = this.pinOf(args[0], e.line); if (!mcuCaps(m, m.pin[pid]).analog) this.err(e.line, `${pid} não tem entrada analógica.`); const c = this.cfg(pid); if (c.mode !== 'in' && c.mode !== 'analog' && c.mode !== 'pullup') this.warn(e.line, `analogRead em ${pid}, que está como saída.`); if (c.mode === 'in') this.setPin(pid, { mode: 'analog' }); RT.vt += this.plat === 'avr' ? 112 : 10; // tempo de conversão do ADC (Uno: ~112 µs com prescaler 128)
+        const v = this.readV(pid, e.line); if (v == null) { this.warn(e.line, `${pid} não está ligado a nada: a leitura analógica flutua.`); return Math.floor(Math.random() * m.adc); } return Math.round(clamp(v / m.vcc, 0, 1) * m.adc); }
       case 'analogWrite': { const pid = this.pinOf(args[0], e.line), caps = mcuCaps(m, m.pin[pid]); const v = clamp(Math.round(args[1]), 0, 255); if (args[1] > 255 || args[1] < 0) this.warn(e.line, `analogWrite aceita 0 a 255; ${Math.round(args[1])} foi limitado a ${v}.`); if (!this.cfg(pid).set && this.cfg(pid).mode === 'in') this.cfg(pid).set = true; if (!caps.pwm) { this.setPin(pid, { mode: 'out', level: v >= 128 ? 1 : 0, duty: 0 }); return 0; } if (v === 0) this.setPin(pid, { mode: 'out', level: 0, duty: 0 }); else if (v === 255) this.setPin(pid, { mode: 'out', level: 1, duty: 100 }); else this.setPin(pid, { mode: 'pwm', level: 0, duty: v / 255 * 100 }); return 0; }
       case 'tone': { const pid = this.pinOf(args[0], e.line); this.setPin(pid, { mode: 'pwm', duty: 50 }); if (args[2]) this.toneEnd = { pid, t: RT.vt + args[2] * 1000 }; return 0; }
       case 'noTone': { const pid = this.pinOf(args[0], e.line); this.setPin(pid, { mode: 'out', level: 0, duty: 0 }); return 0; }
